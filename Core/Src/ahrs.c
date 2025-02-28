@@ -6,14 +6,24 @@
  */
 #include "ahrs.h"
 
-static const float_t mag_hardiron[3] = {26.79, 13.85, 10.00};
+//static const float_t mag_hardiron[3] = {26.79, 13.85, 10.00};
+//static const float_t mag_softiron[9] =
+//{
+//	1.021, 0.024, -0.030,
+//	0.024, 0.890, -0.066,
+//	-0.030, -0.066, 1.106
+//};
+//static const float_t gyro_zerorate[3] = {0.05, -0.01, -0.01};
+//static const float_t accel_zerog[3] = {0, 0, 0};
+
+static const float_t mag_hardiron[3] = {27.36, 10.43, 4.24};
 static const float_t mag_softiron[9] =
 {
-	1.021, 0.024, -0.030,
-	0.024, 0.890, -0.066,
-	-0.030, -0.066, 1.106
+	1.111, 0.010, -0.031,
+	0.010, 0.787, -0.118,
+	-0.031, -0.118, 1.163
 };
-static const float_t gyro_zerorate[3] = {0, 0, 0};
+static const float_t gyro_zerorate[3] = {0.05, -0.01, -0.01};
 static const float_t accel_zerog[3] = {0, 0, 0};
 
 float invSqrt(float x) {
@@ -265,15 +275,19 @@ void calibrate_data(float_t *angular_data, float_t *acceleration_data, float_t *
     float_t mzh = magnetic_data[2] - mag_hardiron[2];
     // soft iron cal
     magnetic_data[0] = mxh * mag_softiron[0] + myh * mag_softiron[1] + mzh * mag_softiron[2];
+    magnetic_data[0] *= (-1);
     magnetic_data[1] = mxh * mag_softiron[3] + myh * mag_softiron[4] + mzh * mag_softiron[5];
+    magnetic_data[1] *= (-1);
     magnetic_data[2] = mxh * mag_softiron[6] + myh * mag_softiron[7] + mzh * mag_softiron[8];
 
     angular_data[0] -= gyro_zerorate[0];
     angular_data[1] -= gyro_zerorate[1];
+    angular_data[1] *= (-1);
     angular_data[2] -= gyro_zerorate[2];
 
     acceleration_data[0] -= accel_zerog[0];
     acceleration_data[1] -= accel_zerog[1];
+    acceleration_data[1] *= (-1);
     acceleration_data[2] -= accel_zerog[2];
 }
 

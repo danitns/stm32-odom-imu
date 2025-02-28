@@ -45,21 +45,6 @@ I2C_HandleTypeDef hi2c1;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-
-static sensbus_t mag_bus = { &hi2c1,
-LSM9DS1_MAG_I2C_ADD_H, 0, 0 };
-static sensbus_t imu_bus = { &hi2c1,
-LSM9DS1_IMU_I2C_ADD_H, 0, 0 };
-
-static int16_t data_raw_acceleration[3];
-static int16_t data_raw_angular_rate[3];
-static int16_t data_raw_magnetic_field[3];
-static float_t acceleration_mg[3];
-static float_t angular_rate_dps[3];
-static float_t magnetic_field_mgauss[3];
-static lsm9ds1_id_t whoamI;
-static lsm9ds1_status_t reg;
-static uint8_t rst;
 static uint8_t tx_buffer[1000];
 
 /* USER CODE END PV */
@@ -71,20 +56,12 @@ static void MX_USART2_UART_Init(void);
 static void MX_I2C1_Init(void);
 /* USER CODE BEGIN PFP */
 
-static int32_t platform_write_imu(void *handle, uint8_t reg,
-		const uint8_t *bufp, uint16_t len);
-static int32_t platform_read_imu(void *handle, uint8_t reg, uint8_t *bufp,
-		uint16_t len);
-static int32_t platform_write_mag(void *handle, uint8_t reg,
-		const uint8_t *bufp, uint16_t len);
-static int32_t platform_read_mag(void *handle, uint8_t reg, uint8_t *bufp,
-		uint16_t len);
-static void tx_com(uint8_t *tx_buffer, uint16_t len);
 static void platform_delay(uint32_t ms);
-static void read_accel_gyro(stmdev_ctx_t *dev_ctx_imu);
-static void read_magnetometer(stmdev_ctx_t *dev_ctx_mag);
-static void print_imu_values();
-static void update_filter(float *q0, float *q1, float *q2, float *q3);
+static void update_filter(float *q0, float *q1, float *q2, float *q3,
+		float_t *angular_rate_dps, float_t *acceleration_mg,
+		float_t *magnetic_field_mgauss);
+static uint8_t init_imu_regs(stmdev_ctx_t *dev_ctx_imu,
+		stmdev_ctx_t *dev_ctx_mag, lsm9ds1_id_t *whoamI, uint8_t *rst);
 
 /* USER CODE END PFP */
 
@@ -125,12 +102,19 @@ int main(void) {
 	MX_I2C1_Init();
 	/* USER CODE BEGIN 2 */
 
-	uint8_t msg[] = "Hello from STM32!\n";
-	HAL_UART_Transmit(&huart2, msg, sizeof(msg) - 1, HAL_MAX_DELAY);
 	uint32_t timestamp = 0;
 	uint32_t timestamp_print = 0;
 
-	float_t offset = 0;
+	static float_t acceleration_mg[3];
+	static float_t angular_rate_dps[3];
+	static float_t magnetic_field_mgauss[3];
+	static lsm9ds1_id_t whoamI;
+	static lsm9ds1_status_t reg;
+	static uint8_t rst;
+	static sensbus_t mag_bus = { &hi2c1,
+	LSM9DS1_MAG_I2C_ADD_H, 0, 0 };
+	static sensbus_t imu_bus = { &hi2c1,
+	LSM9DS1_IMU_I2C_ADD_H, 0, 0 };
 
 	stmdev_ctx_t dev_ctx_imu;
 	stmdev_ctx_t dev_ctx_mag;
@@ -144,42 +128,14 @@ int main(void) {
 	dev_ctx_mag.handle = (void*) &mag_bus;
 	/* Wait sensor boot time */
 	platform_delay(BOOT_TIME);
-	/* Check device ID */
-	lsm9ds1_dev_id_get(&dev_ctx_mag, &dev_ctx_imu, &whoamI);
 
-	if (whoamI.imu != LSM9DS1_IMU_ID || whoamI.mag != LSM9DS1_MAG_ID) {
+	if (init_imu_regs(&dev_ctx_imu, &dev_ctx_mag, &whoamI, &rst) == 1) {
 		uint8_t msg1[] = "FAILED!\n";
 		HAL_UART_Transmit(&huart2, msg1, sizeof(msg1) - 1, HAL_MAX_DELAY);
 		while (1) {
 			/* manage here device not found */
 		}
 	}
-
-	/* Restore default configuration */
-	lsm9ds1_dev_reset_set(&dev_ctx_mag, &dev_ctx_imu, PROPERTY_ENABLE);
-
-	do {
-		lsm9ds1_dev_reset_get(&dev_ctx_mag, &dev_ctx_imu, &rst);
-	} while (rst);
-
-	/* Enable Block Data Update */
-	lsm9ds1_block_data_update_set(&dev_ctx_mag, &dev_ctx_imu, PROPERTY_ENABLE);
-	/* Set full scale */
-	lsm9ds1_xl_full_scale_set(&dev_ctx_imu, LSM9DS1_4g);
-	lsm9ds1_gy_full_scale_set(&dev_ctx_imu, LSM9DS1_500dps);
-	lsm9ds1_mag_full_scale_set(&dev_ctx_mag, LSM9DS1_16Ga);
-	/* Configure filtering chain - See datasheet for filtering chain details */
-	/* Accelerometer filtering chain */
-	lsm9ds1_xl_filter_aalias_bandwidth_set(&dev_ctx_imu, LSM9DS1_AUTO);
-	lsm9ds1_xl_filter_lp_bandwidth_set(&dev_ctx_imu, LSM9DS1_LP_ODR_DIV_50);
-	lsm9ds1_xl_filter_out_path_set(&dev_ctx_imu, LSM9DS1_LP_OUT);
-	/* Gyroscope filtering chain */
-	lsm9ds1_gy_filter_lp_bandwidth_set(&dev_ctx_imu, LSM9DS1_LP_ULTRA_LIGHT);
-	lsm9ds1_gy_filter_hp_bandwidth_set(&dev_ctx_imu, LSM9DS1_HP_MEDIUM);
-	lsm9ds1_gy_filter_out_path_set(&dev_ctx_imu, LSM9DS1_LPF1_HPF_LPF2_OUT);
-	/* Set Output Data Rate / Power mode */
-	lsm9ds1_imu_data_rate_set(&dev_ctx_imu, LSM9DS1_IMU_119Hz);
-	lsm9ds1_mag_data_rate_set(&dev_ctx_mag, LSM9DS1_MAG_UHP_155Hz);
 
 	// AHRS
 	float q0 = 1.0f, q1 = 0.0f, q2 = 0.0f, q3 = 0.0f;
@@ -196,29 +152,25 @@ int main(void) {
 		if ((HAL_GetTick() - timestamp) > (1000 / FILTER_UPDATE_RATE_HZ)) {
 			timestamp = HAL_GetTick();
 			lsm9ds1_dev_status_get(&dev_ctx_mag, &dev_ctx_imu, &reg);
-			read_accel_gyro(&dev_ctx_imu);
-			read_magnetometer(&dev_ctx_mag);
+			read_accel_gyro(&dev_ctx_imu, reg, acceleration_mg,
+					angular_rate_dps);
+			read_magnetometer(&dev_ctx_mag, reg, magnetic_field_mgauss);
 
-			offset = magnetic_field_mgauss[0];
 			calibrate_data(angular_rate_dps, acceleration_mg,
 					magnetic_field_mgauss);
-			offset -= magnetic_field_mgauss[0];
 
-			update_filter(&q0, &q1, &q2, &q3);
+			update_filter(&q0, &q1, &q2, &q3, angular_rate_dps, acceleration_mg,
+					magnetic_field_mgauss);
 
 		}
 		if ((HAL_GetTick() - timestamp_print) > (1000 / PRINT_RATE_HZ)) {
 			timestamp_print = HAL_GetTick();
-			//				print_imu_values();
-			//				snprintf((char*) tx_buffer, sizeof(tx_buffer),
-			//						"Quaternion: %4.2f, %4.2f, %4.2f, %4.2f\r\n",
-			//						q0, q1, q2, q3);
 			snprintf((char*) tx_buffer, sizeof(tx_buffer),
 					"%4.4f %4.4f %4.4f %4.4f %4.4f %4.4f %4.4f %4.4f %4.4f %4.4f\r\n",
-					q0, q1, q2, q3, acceleration_mg[0], (-1) * acceleration_mg[1], acceleration_mg[2],
-					angular_rate_dps[0], (-1) * angular_rate_dps[1], angular_rate_dps[2]);
-			tx_com(tx_buffer, strlen((char const*) tx_buffer));
-			//print_imu_values();
+					q0, q1, q2, q3, acceleration_mg[0], acceleration_mg[1],
+					acceleration_mg[2], angular_rate_dps[0],
+					angular_rate_dps[1], angular_rate_dps[2]);
+			HAL_UART_Transmit(&huart2, tx_buffer, sizeof(tx_buffer) - 1, HAL_MAX_DELAY);
 		}
 
 		/* USER CODE BEGIN 3 */
@@ -388,93 +340,6 @@ static void MX_GPIO_Init(void) {
 
 /* USER CODE BEGIN 4 */
 /*
- * @brief  Write generic imu register (platform dependent)
- *
- * @param  handle    customizable argument. In this examples is used in
- *                   order to select the correct sensor bus handler.
- * @param  reg       register to write
- * @param  bufp      pointer to data to write in register reg
- * @param  len       number of consecutive register to write
- *
- */
-static int32_t platform_write_imu(void *handle, uint8_t reg,
-		const uint8_t *bufp, uint16_t len) {
-	sensbus_t *sensbus = (sensbus_t*) handle;
-	HAL_I2C_Mem_Write(sensbus->hbus, sensbus->i2c_address, reg,
-	I2C_MEMADD_SIZE_8BIT, (uint8_t*) bufp, len, 1000);
-	return 0;
-}
-
-/*
- * @brief  Write generic magnetometer register (platform dependent)
- *
- * @param  handle    customizable argument. In this examples is used in
- *                   order to select the correct sensor bus handler.
- * @param  reg       register to write
- * @param  bufp      pointer to data to write in register reg
- * @param  len       number of consecutive register to write
- *
- */
-static int32_t platform_write_mag(void *handle, uint8_t reg,
-		const uint8_t *bufp, uint16_t len) {
-	sensbus_t *sensbus = (sensbus_t*) handle;
-	/* Write multiple command */
-	reg |= 0x80;
-	HAL_I2C_Mem_Write(sensbus->hbus, sensbus->i2c_address, reg,
-	I2C_MEMADD_SIZE_8BIT, (uint8_t*) bufp, len, 1000);
-	return 0;
-}
-
-/*
- * @brief  Read generic imu register (platform dependent)
- *
- * @param  handle    customizable argument. In this examples is used in
- *                   order to select the correct sensor bus handler.
- * @param  reg       register to read
- * @param  bufp      pointer to buffer that store the data read
- * @param  len       number of consecutive register to read
- *
- */
-static int32_t platform_read_imu(void *handle, uint8_t reg, uint8_t *bufp,
-		uint16_t len) {
-	sensbus_t *sensbus = (sensbus_t*) handle;
-	HAL_I2C_Mem_Read(sensbus->hbus, sensbus->i2c_address, reg,
-	I2C_MEMADD_SIZE_8BIT, bufp, len, 1000);
-	return 0;
-}
-
-/*
- * @brief  Read generic magnetometer register (platform dependent)
- *
- * @param  handle    customizable argument. In this examples is used in
- *                   order to select the correct sensor bus handler.
- * @param  reg       register to read
- * @param  bufp      pointer to buffer that store the data read
- * @param  len       number of consecutive register to read
- *
- */
-static int32_t platform_read_mag(void *handle, uint8_t reg, uint8_t *bufp,
-		uint16_t len) {
-	sensbus_t *sensbus = (sensbus_t*) handle;
-	/* Read multiple command */
-	reg |= 0x80;
-	HAL_I2C_Mem_Read(sensbus->hbus, sensbus->i2c_address, reg,
-	I2C_MEMADD_SIZE_8BIT, bufp, len, 1000);
-	return 0;
-}
-
-/*
- * @brief  Send buffer to console (platform dependent)
- *
- * @param  tx_buffer     buffer to transmit
- * @param  len           number of byte to send
- *
- */
-static void tx_com(uint8_t *tx_buffer, uint16_t len) {
-	HAL_UART_Transmit(&huart2, tx_buffer, len, 1000);
-}
-
-/*
  * @brief  platform specific delay (platform dependent)
  *
  * @param  ms        delay in ms
@@ -484,59 +349,52 @@ static void platform_delay(uint32_t ms) {
 	HAL_Delay(ms);
 }
 
-static void read_accel_gyro(stmdev_ctx_t *dev_ctx_imu) {
-	if (reg.status_imu.xlda && reg.status_imu.gda) {
-		memset(data_raw_acceleration, 0x00, 3 * sizeof(int16_t));
-		memset(data_raw_angular_rate, 0x00, 3 * sizeof(int16_t));
-		lsm9ds1_acceleration_raw_get(dev_ctx_imu, data_raw_acceleration);
-		lsm9ds1_angular_rate_raw_get(dev_ctx_imu, data_raw_angular_rate);
-		acceleration_mg[0] = lsm9ds1_from_fs4g_to_mg(data_raw_acceleration[0])
-				/ 1000.f * SENSORS_GRAVITY_EARTH;
-		acceleration_mg[1] = lsm9ds1_from_fs4g_to_mg(data_raw_acceleration[1])
-				/ 1000.f * SENSORS_GRAVITY_EARTH;// * (-1);
-		acceleration_mg[2] = lsm9ds1_from_fs4g_to_mg(data_raw_acceleration[2])
-				/ 1000.f * SENSORS_GRAVITY_EARTH;
-		angular_rate_dps[0] = lsm9ds1_from_fs500dps_to_mdps(
-				data_raw_angular_rate[0]) / 1000.f;
-		angular_rate_dps[1] = lsm9ds1_from_fs500dps_to_mdps(
-				data_raw_angular_rate[1]) / 1000.f;// * (-1);
-		angular_rate_dps[2] = lsm9ds1_from_fs500dps_to_mdps(
-				data_raw_angular_rate[2]) / 1000.f;
-	}
-}
+static uint8_t init_imu_regs(stmdev_ctx_t *dev_ctx_imu,
+		stmdev_ctx_t *dev_ctx_mag, lsm9ds1_id_t *whoamI, uint8_t *rst) {
+	/* Check device ID */
+	lsm9ds1_dev_id_get(dev_ctx_mag, dev_ctx_imu, whoamI);
 
-static void read_magnetometer(stmdev_ctx_t *dev_ctx_mag) {
-	if (reg.status_mag.zyxda) {
-		/* Read magnetometer data */
-
-		memset(data_raw_magnetic_field, 0x00, 3 * sizeof(int16_t));
-		lsm9ds1_magnetic_raw_get(dev_ctx_mag, data_raw_magnetic_field);
-		magnetic_field_mgauss[0] = lsm9ds1_from_fs16gauss_to_mG(
-				data_raw_magnetic_field[0]) * 0.1f; //* (-1);
-		magnetic_field_mgauss[1] = lsm9ds1_from_fs16gauss_to_mG(
-				data_raw_magnetic_field[1]) * 0.1f;// * (-1);
-		magnetic_field_mgauss[2] = lsm9ds1_from_fs16gauss_to_mG(
-				data_raw_magnetic_field[2]) * 0.1f;
+	if ((*whoamI).imu != LSM9DS1_IMU_ID || (*whoamI).mag != LSM9DS1_MAG_ID) {
+		return 1;
 	}
 
+	/* Restore default configuration */
+	lsm9ds1_dev_reset_set(dev_ctx_mag, dev_ctx_imu, PROPERTY_ENABLE);
+
+	do {
+		lsm9ds1_dev_reset_get(dev_ctx_mag, dev_ctx_imu, rst);
+	} while ((*rst));
+
+	/* Enable Block Data Update */
+	lsm9ds1_block_data_update_set(dev_ctx_mag, dev_ctx_imu, PROPERTY_ENABLE);
+	/* Set full scale */
+	lsm9ds1_xl_full_scale_set(dev_ctx_imu, LSM9DS1_4g);
+	lsm9ds1_gy_full_scale_set(dev_ctx_imu, LSM9DS1_2000dps);
+	lsm9ds1_mag_full_scale_set(dev_ctx_mag, LSM9DS1_16Ga);
+	/* Configure filtering chain - See datasheet for filtering chain details */
+	/* Accelerometer filtering chain */
+	lsm9ds1_xl_filter_aalias_bandwidth_set(dev_ctx_imu, LSM9DS1_AUTO);
+	lsm9ds1_xl_filter_lp_bandwidth_set(dev_ctx_imu, LSM9DS1_LP_ODR_DIV_50);
+	lsm9ds1_xl_filter_out_path_set(dev_ctx_imu, LSM9DS1_LP_OUT);
+	/* Gyroscope filtering chain */
+	lsm9ds1_gy_filter_lp_bandwidth_set(dev_ctx_imu, LSM9DS1_LP_MEDIUM);
+	lsm9ds1_gy_filter_hp_bandwidth_set(dev_ctx_imu, LSM9DS1_HP_ULTRA_LIGHT);
+	lsm9ds1_gy_filter_out_path_set(dev_ctx_imu, LSM9DS1_LPF1_LPF2_OUT);
+	/* Set Output Data Rate / Power mode */
+	lsm9ds1_imu_data_rate_set(dev_ctx_imu, LSM9DS1_IMU_119Hz);
+	lsm9ds1_mag_data_rate_set(dev_ctx_mag, LSM9DS1_MAG_UHP_155Hz);
+
+	return 0;
 }
 
-static void print_imu_values() {
-	snprintf((char*) tx_buffer, sizeof(tx_buffer),
-			"IMU - [mg]:%4.2f\t%4.2f\t%4.2f\t[dps]:%4.2f\t%4.2f\t%4.2f\t MAG - [mG]:%4.2f\t%4.2f\t%4.2f\r\n",
+static void update_filter(float *q0, float *q1, float *q2, float *q3,
+		float_t *angular_rate_dps, float_t *acceleration_mg,
+		float_t *magnetic_field_mgauss) {
+	updateAHRS(angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2],
 			acceleration_mg[0], acceleration_mg[1], acceleration_mg[2],
-			angular_rate_dps[0], angular_rate_dps[1], angular_rate_dps[2],
 			magnetic_field_mgauss[0], magnetic_field_mgauss[1],
-			magnetic_field_mgauss[2]);
-	tx_com(tx_buffer, strlen((char const*) tx_buffer));
-}
-
-static void update_filter(float *q0, float *q1, float *q2, float *q3) {
-	updateAHRS(angular_rate_dps[0], (-1) * angular_rate_dps[1], angular_rate_dps[2],
-			acceleration_mg[0], (-1) * acceleration_mg[1], acceleration_mg[2],
-			(-1) * magnetic_field_mgauss[0], (-1) * magnetic_field_mgauss[1], magnetic_field_mgauss[2],
-			1.f / FILTER_UPDATE_RATE_HZ,
-			q0, q1, q2, q3);
+			magnetic_field_mgauss[2], 1.f / FILTER_UPDATE_RATE_HZ, q0, q1, q2,
+			q3);
 }
 /* USER CODE END 4 */
 

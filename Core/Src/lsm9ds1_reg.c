@@ -1291,13 +1291,9 @@ int32_t lsm9ds1_angular_rate_raw_get(stmdev_ctx_t *ctx, int16_t *val)
   int32_t ret;
 
   ret = lsm9ds1_read_reg(ctx, LSM9DS1_OUT_X_L_G, buff, 6);
-  val[0] = (int16_t)buff[1];
-  val[0] = (val[0] * 256) + (int16_t)buff[0];
-  val[1] = (int16_t)buff[3];
-  val[1] = (val[1] * 256) + (int16_t)buff[2];
-  val[2] = (int16_t)buff[5];
-  val[2] = (val[2] * 256) + (int16_t)buff[4];
-
+  val[0] = ((int16_t)((buff[1] << 8) | buff[0]));
+  val[1] = ((int16_t)((buff[3] << 8) | buff[2]));
+  val[2] = ((int16_t)((buff[5] << 8) | buff[4]));
   return ret;
 }
 

@@ -34,18 +34,14 @@ extern "C" {
 #include <string.h>
 #include <stdio.h>
 #include "lsm9ds1_reg.h"
+#include "lsm9ds1_reader.h"
 #include "ahrs.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
 
-typedef struct {
-  void   *hbus;
-  uint8_t i2c_address;
-  GPIO_TypeDef *cs_port;
-  uint16_t cs_pin;
-} sensbus_t;
+
 
 /* USER CODE END ET */
 
