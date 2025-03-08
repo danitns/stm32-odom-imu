@@ -33,9 +33,12 @@ extern "C" {
 /* USER CODE BEGIN Includes */
 #include <string.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include "lsm9ds1_reg.h"
 #include "lsm9ds1_reader.h"
 #include "ahrs.h"
+#include "servo.h"
+#include "commands.h"
 /* USER CODE END Includes */
 
 /* Exported types ------------------------------------------------------------*/
@@ -56,6 +59,8 @@ extern "C" {
 /* USER CODE BEGIN EM */
 
 /* USER CODE END EM */
+
+void HAL_TIM_MspPostInit(TIM_HandleTypeDef *htim);
 
 /* Exported functions prototypes ---------------------------------------------*/
 void Error_Handler(void);
@@ -83,8 +88,40 @@ void Error_Handler(void);
 /* USER CODE BEGIN Private defines */
 #define    BOOT_TIME                 100 //ms
 #define    FILTER_UPDATE_RATE_HZ     100 //hz
-#define    PRINT_RATE_HZ     10
+#define    PRINT_RATE_HZ     		 10
 #define    INV_FILTER_UPDATE_RATE_HZ (0.0125F) //hz
+#define	   BUFFER_SIZE_CMD           64
+#define	   LEFT 					 0
+#define    RIGHT   					 1
+#define    MAX_ARGS 				 3
+#define    AUTO_STOP_INTERVAL		 2000
+#define    I2C_BUFFER_SIZE           20
+#define    PID_RATE           		 30     // Hz
+
+
+typedef struct {
+  double TargetTicksPerFrame;    // target speed in ticks per frame
+  long Encoder;                  // encoder count
+  long PrevEnc;                  // last encoder count
+
+  /*
+  * Using previous input (PrevInput) instead of PrevError to avoid derivative kick,
+  * see http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-derivative-kick/
+  */
+  int PrevInput;                // last input
+  //int PrevErr;                   // last error
+
+  /*
+  * Using integrated term (ITerm) instead of integrated error (Ierror),
+  * to allow tuning changes,
+  * see http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-tuning-changes/
+  */
+  //int Ierror;
+  int ITerm;                    //integrated term
+
+  long output;                    // last motor setting
+} SetPointInfo;
+
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
