@@ -97,6 +97,9 @@ void Error_Handler(void);
 #define    AUTO_STOP_INTERVAL		 2000
 #define    I2C_BUFFER_SIZE           20
 #define    PID_RATE           		 30     // Hz
+#define    KP 						 1.8F
+#define    KI 						 0.4F
+#define    KD						 0.1F
 
 
 typedef struct {
@@ -108,7 +111,7 @@ typedef struct {
   * Using previous input (PrevInput) instead of PrevError to avoid derivative kick,
   * see http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-derivative-kick/
   */
-  int PrevInput;                // last input
+  long PrevInput;                // last input
   //int PrevErr;                   // last error
 
   /*
@@ -117,7 +120,7 @@ typedef struct {
   * see http://brettbeauregard.com/blog/2011/04/improving-the-beginner%E2%80%99s-pid-tuning-changes/
   */
   //int Ierror;
-  int ITerm;                    //integrated term
+  long ITerm;                    //integrated term
 
   long output;                    // last motor setting
 } SetPointInfo;

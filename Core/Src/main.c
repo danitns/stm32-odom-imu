@@ -68,7 +68,6 @@ static void MX_TIM17_Init(void);
 static void MX_I2C2_Init(void);
 /* USER CODE BEGIN PFP */
 
-static void platform_delay(uint32_t ms);
 static void update_filter();
 static uint8_t init_imu_regs(stmdev_ctx_t *dev_ctx_imu,
 		stmdev_ctx_t *dev_ctx_mag, lsm9ds1_id_t *whoamI, uint8_t *rst);
@@ -91,6 +90,8 @@ volatile uint8_t rx_buffer[BUFFER_SIZE_CMD]; // Command buffer
 volatile uint8_t rx_index = 0; // Index for received characters
 volatile uint8_t command_ready = 0; // Flag to indicate a complete command
 
+uint16_t tx_buffer[20];
+
 // ENCODERS AND MOTORS
 int current_servo_pos_us = MID_TURN_US;
 volatile uint32_t timestamp_motor_command = 0;
@@ -112,11 +113,9 @@ uint8_t imu_data_buffer[I2C_BUFFER_SIZE];
 
 // PID
 const int PID_INTERVAL = 1000 / PID_RATE;
-float Kp = 1.0;
-float Ki = 0.1;
-float Kd = 0.05;
-float Ko = 1.0;
 unsigned char moving = 0;
+
+unsigned long lastPIDPrint = 0;
 
 SetPointInfo leftPID, rightPID;
 
@@ -186,7 +185,7 @@ int main(void) {
 	dev_ctx_mag.read_reg = platform_read_mag;
 	dev_ctx_mag.handle = (void*) &mag_bus;
 	/* Wait sensor boot time */
-	platform_delay(BOOT_TIME);
+	HAL_Delay(BOOT_TIME);
 
 	if (init_imu_regs(&dev_ctx_imu, &dev_ctx_mag, &whoamI, &rst) == 1) {
 		uint8_t msg1[] = "FAILED!\n";
@@ -195,13 +194,13 @@ int main(void) {
 			/* manage here device not found */
 		}
 	}
+	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 1400);
 
 	/* USER CODE END 2 */
 
 	/* Infinite loop */
 	/* USER CODE BEGIN WHILE */
 	HAL_UART_Receive_IT(&huart2, (uint8_t*) &rx_data, 1);
-	//HAL_I2C_Slave_Receive_IT(&hi2c2, (uint8_t*)&i2c_rx_buffer, 1);
 	while (1) {
 		/* USER CODE END WHILE */
 
@@ -213,7 +212,7 @@ int main(void) {
 
 		if (HAL_I2C_GetState(&hi2c2) == HAL_I2C_STATE_READY) {
 			// If the slave is ready and a request is made, transmit data
-			HAL_I2C_Slave_Transmit(&hi2c2, imu_data_buffer, 20 * sizeof(uint8_t), 100); // Timeout for non-blocking
+			HAL_I2C_Slave_Transmit(&hi2c2, imu_data_buffer, 20 * sizeof(uint8_t), 10); // Timeout for non-blocking
 		}
 
 		if ((HAL_GetTick() - timestamp) > (1000 / FILTER_UPDATE_RATE_HZ)) {
@@ -229,14 +228,22 @@ int main(void) {
 			update_filter();
 			update_imu_buffer();
 
-			// motors
-			read_encoder_values();
-
 		}
 
-		if (HAL_GetTick() > nextPID) {
-			update_pid();
-			nextPID = HAL_GetTick() +  PID_INTERVAL;
+//		if(HAL_GetTick() - lastPIDPrint > 100) {
+//			snprintf((char*) tx_buffer, sizeof(tx_buffer),
+//					"%ld %ld %ld\r\n",
+//					(uint16_t)leftPID.TargetTicksPerFrame, leftPID.output, leftPID.PrevInput);
+//
+//			HAL_UART_Transmit(&huart2, tx_buffer,
+//					strlen((char const*) tx_buffer),
+//					HAL_MAX_DELAY);
+//			lastPIDPrint = HAL_GetTick();
+//		}
+
+		if ((long)(HAL_GetTick() - nextPID) >= 0) {
+		    update_pid();
+		    nextPID = HAL_GetTick() + PID_INTERVAL;
 		}
 
 		if ((HAL_GetTick() - timestamp_motor_command) > AUTO_STOP_INTERVAL) {
@@ -619,7 +626,7 @@ static void MX_TIM4_Init(void) {
 		Error_Handler();
 	}
 	/* USER CODE BEGIN TIM4_Init 2 */
-
+	HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
 	/* USER CODE END TIM4_Init 2 */
 	HAL_TIM_MspPostInit(&htim4);
 
@@ -678,7 +685,7 @@ static void MX_TIM17_Init(void) {
 		Error_Handler();
 	}
 	/* USER CODE BEGIN TIM17_Init 2 */
-	HAL_TIM_PWM_Start(&htim17, TIM_CHANNEL_1);
+
 	/* USER CODE END TIM17_Init 2 */
 	HAL_TIM_MspPostInit(&htim17);
 
@@ -753,16 +760,6 @@ static void MX_GPIO_Init(void) {
 	/* USER CODE END MX_GPIO_Init_2 */
 }
 
-/* USER CODE BEGIN 4 */
-/*
- * @brief  platform specific delay (platform dependent)
- *
- * @param  ms        delay in ms
- *
- */
-static void platform_delay(uint32_t ms) {
-	HAL_Delay(ms);
-}
 
 static uint8_t init_imu_regs(stmdev_ctx_t *dev_ctx_imu,
 		stmdev_ctx_t *dev_ctx_mag, lsm9ds1_id_t *whoamI, uint8_t *rst) {
@@ -867,42 +864,6 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart) {
 	}
 }
 
-//void HAL_I2C_SlaveRxCpltCallback(I2C_HandleTypeDef *hi2c) {
-//    if (hi2c->Instance == hi2c2.Instance) {
-//    	update_imu_buffer();
-//        if(i2c_rx_buffer[0] == 0x02) {
-//        	HAL_UART_Transmit(&huart2, (uint8_t*)"I2C Data Received\n", 18, HAL_MAX_DELAY);
-//        	HAL_I2C_Slave_Transmit_IT(&hi2c2, imu_data_buffer, I2C_BUFFER_SIZE);
-//        } else{
-//        	HAL_UART_Transmit(&huart2, (uint8_t*)"UNK Data Received\n", 18, HAL_MAX_DELAY);
-//        	HAL_I2C_Slave_Transmit_IT(&hi2c2, imu_data_buffer, I2C_BUFFER_SIZE);
-//        }
-//        HAL_I2C_Slave_Receive_IT(&hi2c2, (uint8_t*)i2c_rx_buffer, 1);
-//    }
-//}
-
-//void HAL_I2C_ListenCpltCallback(I2C_HandleTypeDef *hi2c) {
-//    if (hi2c->Instance == hi2c2.Instance) {
-//        HAL_UART_Transmit(&huart2, (uint8_t*)"I2C Read Request\n", 17, HAL_MAX_DELAY);
-//        HAL_I2C_Slave_Transmit_IT(&hi2c2, imu_data_buffer, I2C_BUFFER_SIZE);
-//    }
-//}
-//
-//void HAL_I2C_SlaveTxCpltCallback(I2C_HandleTypeDef *hi2c) {
-//    if (hi2c->Instance == hi2c2.Instance) {
-//        HAL_UART_Transmit(&huart2, (uint8_t*)"I2C Transmit Done\n", 18, HAL_MAX_DELAY);
-//        // Ready to listen for the next request
-//        HAL_I2C_EnableListen_IT(&hi2c2);
-//    }
-//}
-//
-//void HAL_I2C_ErrorCallback(I2C_HandleTypeDef *hi2c) {
-//    if (hi2c->Instance == hi2c2.Instance) {
-//        HAL_UART_Transmit(&huart2, (uint8_t*)"I2C Error!\n", 10, HAL_MAX_DELAY);
-//        HAL_I2C_EnableListen_IT(&hi2c2);  // Restart listening mode
-//    }
-//}
-
 static void parse_command(char *command) {
 	char cmd;
 	int values[MAX_ARGS] = { 0 };
@@ -922,6 +883,9 @@ static void parse_command(char *command) {
 	switch (cmd) {
 	case MOTOR_SPEEDS: // Example: Move motors "m 100 200"
 		if (argCount >= 3) {
+			set_desired_position(values[2], &current_servo_pos_us);
+			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, current_servo_pos_us);
+
 			if (values[0] == 0 && values[1] == 0) {
 				set_motor_speeds(0, 0);
 				reset_pid();
@@ -930,9 +894,7 @@ static void parse_command(char *command) {
 				moving = 1;
 			leftPID.TargetTicksPerFrame = values[0];
 			rightPID.TargetTicksPerFrame = values[1];
-			set_desired_position(values[2], &current_servo_pos_us);
 
-			__HAL_TIM_SET_COMPARE(&htim17, TIM_CHANNEL_1, current_servo_pos_us);
 			timestamp_motor_command = HAL_GetTick();
 			snprintf(response, sizeof(response), "OK %d %d %d\r\n", values[0],
 					values[1], current_servo_pos_us);
@@ -942,7 +904,7 @@ static void parse_command(char *command) {
 	case SERVO_WRITE: // Example: Set servo position "s 45"
 		if (argCount >= 1) {
 			set_desired_position(values[0], &current_servo_pos_us);
-			__HAL_TIM_SET_COMPARE(&htim17, TIM_CHANNEL_1, current_servo_pos_us);
+			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, current_servo_pos_us);
 			snprintf(response, sizeof(response), "OK %d \r\n",
 					current_servo_pos_us);
 		}
@@ -958,6 +920,26 @@ static void parse_command(char *command) {
 	case 'i': // Example: Set servo position "s 45"
 		snprintf(response, sizeof(response), "%4.4f %4.4f %4.4f %4.4f \r\n", q0,
 				q1, q2, q3);
+		break;
+	case 'r': // Example: Move motors "m 100 200"
+		if (argCount >= 3) {
+			set_desired_position(values[2], &current_servo_pos_us);
+			__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, current_servo_pos_us);
+			set_motor_speeds(values[0], values[1]);
+
+//			if (values[0] == 0 && values[1] == 0) {
+//				set_motor_speeds(0, 0);
+//				//reset_pid();
+//				moving = 0;
+//			} else
+//				moving = 1;
+//			leftPID.TargetTicksPerFrame = values[0];
+//			rightPID.TargetTicksPerFrame = values[1];
+
+			timestamp_motor_command = HAL_GetTick();
+			snprintf(response, sizeof(response), "OK %d %d %d\r\n", values[0],
+					values[1], current_servo_pos_us);
+		}
 		break;
 
 	default:
@@ -1016,7 +998,7 @@ static void reset_pid() {
 static void do_pid(SetPointInfo *p) {
     long Perror;
     long output;
-    int input;
+    long input;
 
     // Compute the error
     input = p->Encoder - p->PrevEnc;
@@ -1026,7 +1008,7 @@ static void do_pid(SetPointInfo *p) {
     if (abs(Perror) < 2) Perror = 0;
 
     // Compute PID output
-    output = (Kp * Perror - Kd * (input - p->PrevInput) + p->ITerm) / Ko;
+    output = KP * Perror - KD * (input - p->PrevInput) + p->ITerm;
 
     // Store the previous encoder value
     p->PrevEnc = p->Encoder;
@@ -1041,7 +1023,7 @@ static void do_pid(SetPointInfo *p) {
         p->ITerm = 0; // Prevent integral windup
     }
     else {
-        p->ITerm += Ki * Perror;  // Integral accumulation
+        p->ITerm += KI * Perror;  // Integral accumulation
     }
 
     p->output = output;
