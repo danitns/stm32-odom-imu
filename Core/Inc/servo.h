@@ -10,9 +10,9 @@
 
 #define MIN_TURN_RADS -454  // Minimum turn position
 #define MAX_TURN_RADS 384   // Maximum turn position
-#define MIN_TURN_US 960
+#define MIN_TURN_US 920
 #define MID_TURN_US 1400
-#define MAX_TURN_US 1840
+#define MAX_TURN_US 1880
 
 void set_desired_position(int pos_rad, int* pos_us);
 int get_position_in_rads(int pos_us);
